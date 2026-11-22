@@ -195,6 +195,41 @@ set -e
   exit 1
 }
 
+# --- upsert.sh stale-ref sweep (stubbed gh) ---
+# Orphaned refs (no branch/tag) are purged even when the event ref is unrelated;
+# live branches, tags and protected refs are kept.
+stub="$tmpdir/stub-bin"
+mkdir -p "$stub"
+cat >"$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >>"$GH_LOG"
+case "$*" in
+  *"/deployments?"*) cat "$FIXTURE" ;;
+  *"/branches?"*) printf 'main\nfix/live\n' ;;
+  *"/tags?"*) printf 'v1.0.0\n' ;;
+esac
+STUB
+chmod +x "$stub/gh"
+sweep_fixture="$tmpdir/sweep.json"
+cat >"$sweep_fixture" <<'JSON'
+[
+ {"id":1,"ref":"main","environment":"github-pages"},
+ {"id":2,"ref":"main","environment":"github-pages"},
+ {"id":3,"ref":"feat/ai-usage","environment":"github-pages"},
+ {"id":4,"ref":"fix/live","environment":"github-pages"},
+ {"id":5,"ref":"fix/live","environment":"github-pages"},
+ {"id":6,"ref":"v1.0.0","environment":"github-pages"},
+ {"id":7,"ref":"feat/gone","environment":"github-pages"}
+]
+JSON
+export GH_LOG="$tmpdir/gh.log" FIXTURE="$sweep_fixture"
+: >"$GH_LOG"
+PATH="$stub:$PATH" "$root/upsert-deployments/upsert.sh" \
+  --owner o --repo r --ref feat/ai-usage --mode purge --protect-ref main >/dev/null
+deleted="$(grep -- '-X DELETE' "$GH_LOG" | sed -E 's#.*/deployments/([0-9]+)$#\1#' | sort -n | tr '\n' ' ')"
+[[ "$deleted" == "3 7 " ]] || { echo "error: sweep deleted '$deleted', want '3 7 '" >&2; exit 1; }
+unset GH_LOG FIXTURE
+
 # --- assemble.sh mode validation ---
 assemble="$root/assemble/assemble.sh"
 chmod +x "$assemble"
